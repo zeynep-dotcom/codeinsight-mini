@@ -1,0 +1,17 @@
+# Web UI
+streamlit>=1.32.0
+
+# Static analysis
+pylint>=3.0.0
+radon>=6.0.0
+
+# ADK (Google Agent Development Kit)
+google-adk>=1.10.0
+
+# optional agents agent
+ollama>=0.1.0
+openai>=1.40.0
+
+# PDF
+fpdf2>=2.7.0
+matplotlib>=3.8.0

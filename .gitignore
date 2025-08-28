@@ -1,0 +1,30 @@
+# --- Python / venv / build ---
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# --- Tools / caches ---
+.pytest_cache/
+.mypy_cache/
+.coverage
+*.log
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+
+# --- App artifacts ---
+artifacts/
+**/*_chart_*.png
+
+# --- Local config / secrets ---
+.env
+*.env
+
+# --- Streamlit ---
+.streamlit/
