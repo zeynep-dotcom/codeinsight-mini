@@ -18,8 +18,15 @@ except ImportError:
 
 def _run_pylint_api(args: list[str], reporter: JSONReporter) -> bool:
     """runs pylint using API with fallback compatibility"""
+    print("PYLINT ARGS:", args)
     if PylintRun is None:
         return False
+
+    # pylint namespace error backup (temp)
+    if not any(a.startswith("--mixin-class-rgx") for a in args):
+        args = ["--mixin-class-rgx=.*[Mm]ixin", *args]
+    if not any(a.startswith("--overgeneral-exceptions") for a in args):
+        args.append("--overgeneral-exceptions=BaseException,Exception")
 
     try:
         """modern api (Pylint 2.5+)"""
@@ -46,7 +53,7 @@ def _run_pylint_subprocess(files: list[str]) -> dict:
     """runs pylint via subprocess"""
     try:
         result = subprocess.run(
-            ['pylint'] + files + ['--output-format=json'],
+            ['pylint'] + files + ['--output-format=json', '--overgeneral-exceptions=BaseException,Exception'],
             capture_output=True,
             text=True,
             timeout=120  # 2 minute timeout
@@ -108,26 +115,26 @@ def run_pylint(code_dir: Path) -> dict:
     return _run_pylint_subprocess(files)
 
 
-def test_pylint_basic():
-    """test function (can be removed in production)"""
-    import tempfile
-
-    test_code = '''
-def bad_function():
-    unused_variable = 5
-    another_unused = "test"
-    if True:
-        print("hello")
-'''
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        test_file = Path(tmp_dir) / "test_bad_code.py"
-        test_file.write_text(test_code)
-
-        result = run_pylint(Path(tmp_dir))
-
-        return {
-            "test_passed": result['summary']['total'] > 0,
-            "messages_found": result['summary']['total'],
-            "by_type": result['summary']['by_type']
-        }
+# def test_pylint_basic():
+#     """test function (can be removed in production)"""
+#     import tempfile
+#
+#     test_code = '''
+# def bad_function():
+#     unused_variable = 5
+#     another_unused = "test"
+#     if True:
+#         print("hello")
+# '''
+#
+#     with tempfile.TemporaryDirectory() as tmp_dir:
+#         test_file = Path(tmp_dir) / "test_bad_code.py"
+#         test_file.write_text(test_code)
+#
+#         result = run_pylint(Path(tmp_dir))
+#
+#         return {
+#             "test_passed": result['summary']['total'] > 0,
+#             "messages_found": result['summary']['total'],
+#             "by_type": result['summary']['by_type']
+#         }

@@ -1,8 +1,15 @@
 from pathlib import Path
 from datetime import datetime
-import json
+from typing import Any, Dict, Tuple
 
+import datetime as dt
+import json
 import matplotlib.pyplot as plt
+
+try:
+    from fpdf import FPDF  # fpdf2
+except Exception:  # PDF optional
+    FPDF = None
 
 # JSON
 def save_json_report(data: dict, out_dir: Path) -> Path:
@@ -159,6 +166,66 @@ def save_pdf_report(result: dict, outdir: Path) -> Path:
     pdf.output(str(path))
     return path
 
-
 def to_json_bytes(data: dict) -> bytes:
     return json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+
+def save_pair_reports(
+    a: Tuple[str, Dict[str, Any]],
+    b: Tuple[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Parameters:
+      a: (project_name, report_data)
+      b: (project_name, report_data)
+    Job:
+      - json_report.save_json_report
+      - json_report.save_markdown_report
+      - json_report.save_pdf_report
+    for BOTH of the projects.
+    Save path:
+      reports/<YYYYmmdd-HHMMSS>_<A>_vs_<B>/{A,B}/
+    Feedback:
+      {
+        "root": "<kök_klasör>",
+        "A": {"name": "<A>", "created": {...}, "errors": {...?}},
+        "B": {"name": "<B>", "created": {...}, "errors": {...?}}
+      }
+    """
+    name_a, data_a = a
+    name_b, data_b = b
+
+    ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    root = Path("reports") / f"{ts}_{name_a}_vs_{name_b}"
+    out_a = root / name_a
+    out_b = root / name_b
+    out_a.mkdir(parents=True, exist_ok=True)
+    out_b.mkdir(parents=True, exist_ok=True)
+
+    def save_all_for_one(proj_name: str, report_data: Dict[str, Any], outdir: Path) -> Dict[str, Any]:
+        created, errors = {}, {}
+        tasks = [
+            ("json", "json", save_json_report),
+            ("markdown", "md", save_markdown_report),
+            ("pdf", "pdf", save_pdf_report),
+        ]
+        for key, ext, func in tasks:
+            try:
+                path = func(report_data, str(outdir))
+                if not path:
+                    path = outdir / f"{proj_name}.{ext}"
+                created[key] = str(path)
+            except TypeError:
+                try:
+                    default_path = outdir / f"{proj_name}.{ext}"
+                    path = func(report_data, str(default_path))
+                    created[key] = str(path) if path else str(default_path)
+                except Exception as e:
+                    errors[key] = f"{type(e).__name__}: {e}"
+            except Exception as e:
+                errors[key] = f"{type(e).__name__}: {e}"
+        return {"created": created, **({"errors": errors} if errors else {})}
+
+    resA = save_all_for_one(name_a, data_a, out_a)
+    resB = save_all_for_one(name_b, data_b, out_b)
+
+    return {"root": str(root), "A": {"name": name_a, **resA}, "B": {"name": name_b, **resB}}

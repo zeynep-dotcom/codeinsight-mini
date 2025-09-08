@@ -1,111 +1,124 @@
 from __future__ import annotations
 from pathlib import Path
 from statistics import mean
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
+from concurrent.futures import ThreadPoolExecutor
 
 import os
 
-from codeinsight.agents.adk_flow_integration import run_analysis_with_adk_flow
+from codeinsight.agents.adk_flow_integration import run_analysis_with_adk_flow, _compute_quality_score
 from codeinsight.reporting.json_report import (
     save_json_report,
     save_markdown_report,
     save_pdf_report,
+    save_pair_reports,
 )
 
+#comparison utilities
+def _avg(seq):
+    return sum(seq) / len(seq) if seq else 0.0
 
-def _clamp(x: float, lo: float = 0.0, hi: float = 100.0) -> int:
-    return int(max(lo, min(hi, x))) # returns int
+def _radon_avgs(res: Dict[str, Any]) -> tuple[float, float]:
+    files = (res.get("radon") or {}).get("files") or []
+    mi_vals = [float(f.get("mi", 0.0)) for f in files]
+    cc_vals = [float(f.get("cc_avg", 0.0)) for f in files]
+    return (_avg(mi_vals), _avg(cc_vals))
 
-def _compute_quality_score(result: Dict[str, Any]) -> int:
-    """
-    per-file scores from recommendations, returns an integer 0-100.
-    (below is an explanation of how calculation works for this project)
-    Heuristic:
-    - Base is average Maintainability Index (MI).
-    - Subtract weighted penalties:
-        Pylint: C=0.6, R=0.8, W=1.0, E=3.0, F=8.0
-        Radon:  +2.0 per MI warning (files with MI<65)
-                +1.5 per CC hotspot (blocks with CC>10)
-        Density: if total findings per file > 3, extra 2 points per excess unit
-    Clamp to [0, 100].
-    """
+def _pylint_total(res: Dict[str, Any]) -> int:
+    return int(((res.get("pylint") or {}).get("summary") or {}).get("total", 0))
 
-    # -----OLD-----
-    # if recommender exists -> average file scores
-    # files = (result.get("recommendations") or {}).get("files", [])
-    # if files:
-    #     try:
-    #         return _clamp(round(mean(f.get("score", 0) for f in files)))
-    #     except Exception:
-    #         pass  # fall back below if something is off
-    #
-    # # fallback -> mi average minus penalty for pylint messages
-    # radon = result.get("radon") or {}
-    # radon_files = radon.get("files") or []
-    # mi_avg = mean([f.get("mi", 100.0) for f in radon_files]) if radon_files else 100.0
-    #
-    # pylint_total = int((result.get("pylint") or {}).get("summary", {}).get("total", 0))
-    # penalty = min(40.0, pylint_total * 1.5)  # tune later
-    #
-    # return _clamp(round(mi_avg - penalty))
+def _top_hotspots(res: Dict[str, Any], n: int = 5):
+    files = (res.get("radon") or {}).get("files") or []
+    files_sorted = sorted(files, key=lambda f: float(f.get("cc_avg", 0.0)), reverse=True)
+    out = []
+    for f in files_sorted[:n]:
+        out.append({
+            "file": Path(f.get("path", "")).name,
+            "cc_avg": round(float(f.get("cc_avg", 0.0)), 1),
+            "mi": round(float(f.get("mi", 0.0)), 1),
+        })
+    return out
 
-    radon = result.get("radon") or {}
-    r_files = radon.get("files") or []
+def compare_results(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a JSON-friendly comparison snapshot."""
+    mi_a, cc_a = _radon_avgs(a); mi_b, cc_b = _radon_avgs(b)
+    rows = [
+        {"metric": "quality_score", "A": float(a.get("quality_score", 0)), "B": float(b.get("quality_score", 0))},
+        {"metric": "issues_found", "A": int(a.get("issues_found", 0)), "B": int(b.get("issues_found", 0))},
+        {"metric": "files_scanned", "A": int(a.get("files_scanned", 0)), "B": int(b.get("files_scanned", 0))},
+        {"metric": "pylint_total", "A": _pylint_total(a), "B": _pylint_total(b)},
+        {"metric": "mi_avg", "A": round(mi_a, 1), "B": round(mi_b, 1)},
+        {"metric": "cc_avg", "A": round(cc_a, 1), "B": round(cc_b, 1)},
+    ]
+    # who is “better”? (higher is better for score, mi; lower for issues, pylint, cc)
+    better_high = {"quality_score", "mi_avg"}
+    for r in rows:
+        r["delta"] = round(float(r["B"]) - float(r["A"]), 2)
+        if r["A"] == r["B"]:
+            r["better"] = "="
+        elif r["metric"] in better_high:
+            r["better"] = "A" if r["A"] > r["B"] else "B"
+        else:
+            r["better"] = "A" if r["A"] < r["B"] else "B"
 
-    # base from MI
-    if r_files:
-        avg_mi = sum(float(f.get("mi", 0.0)) for f in r_files) / max(1, len(r_files))
-    else:
-        avg_mi = 50.0  # neutral base if MI unknown
+    return {
+        "metrics": rows,
+        "top_hotspots": {"A": _top_hotspots(a), "B": _top_hotspots(b)},
+    }
 
-    # pylint penalties
-    PYLINT_W = {"C": 0.30, "R": 0.50, "W": 0.80, "E": 2.20, "F": 5.50}
-    by_type = ((result.get("pylint") or {}).get("summary") or {}).get("by_type", {}) or {}
-    norm = {k.upper(): int(v) for k, v in by_type.items()}
-    # also accept long keys
-    long2short = {"convention": "C", "refactor": "R", "warning": "W", "error": "E", "fatal": "F"}
-    for long_k, short_k in long2short.items():
-        if long_k in by_type:
-            norm[short_k] = int(by_type[long_k])
+# llm comparison
+# def _llm_comparison_markdown(cmp_payload: dict, res_a=None, res_b=None) -> str | None:
+#     try:
+#         from codeinsight.agents.adk_flow_integration import llm_comparison_markdown
+#         return llm_comparison_markdown(cmp_payload, res_a=res_a, res_b=res_b)  # returns None if no agent/disabled
+#     except Exception:
+#         return None
 
-    C = norm.get("C", 0)
-    R = norm.get("R", 0)
-    W = norm.get("W", 0)
-    E = norm.get("E", 0)
-    F = norm.get("F", 0)
-    pylint_penalty = (
-            PYLINT_W["C"] * C +
-            PYLINT_W["R"] * R +
-            PYLINT_W["W"] * W +
-            PYLINT_W["E"] * E +
-            PYLINT_W["F"] * F
-    )
+def run_pair_and_compare(dir_a: Path, dir_b: Path, with_llm: bool = True):
+    """Analyze dir_a and dir_b in parallel, then compare + LLM summary."""
+    res_a, res_b = run_pipeline_pair(dir_a, dir_b)
 
-    # radon penalties
-    RADON_W_MI = 1.20  # files with MI < 65
-    RADON_W_CC = 0.90  # CC > 10 blocks
-    rsum = (radon.get("summary") or {})
-    mi_warn = int(rsum.get("mi_warnings", 0))
-    cc_hot = int(rsum.get("cc_hotspots", 0))
-    radon_penalty = RADON_W_MI * mi_warn + RADON_W_CC * cc_hot
+    name_a = Path(dir_a).name
+    name_b = Path(dir_b).name
 
-    # density penalty (messages per file)
-    total_msgs = int(((result.get("pylint") or {}).get("summary") or {}).get("total", 0))
-    files_scanned = int((rsum.get("files") or len(r_files) or 1))
-    per_file = total_msgs / max(1, files_scanned)
-    DENSITY_THRESHOLD = 4.0
-    DENSITY_SLOPE = 1.2
-    density_penalty = (per_file - DENSITY_THRESHOLD) * DENSITY_SLOPE if per_file > DENSITY_THRESHOLD else 0.0
+    cmp = compare_results(res_a, res_b)
 
-    PENALTY_SCALE = 0.85
-    total_penalty = PENALTY_SCALE * (pylint_penalty + radon_penalty + density_penalty)
-    raw = avg_mi - total_penalty
-    return _clamp(round(raw))
+    llm_md = None
+    if with_llm:
+        try:
+            # minimal fallback:
+            from codeinsight.agents.adk_flow_integration import summarize_comparison_with_llm
+            llm_md = summarize_comparison_with_llm(res_a, res_b, cmp)  # returns markdown
+        except Exception as e:
+            llm_md = f"_LLM comparison unavailable: {e}_"
 
+    # Save dual reports in all formats that are supported
+    reports_dir = Path("artifacts") / "reports"
+    res_paths = {}
+    for fmt in ("json", "markdown", "pdf"): # simple versions
+        try:
+            p = save_pair_reports((name_a, res_a),(name_b, res_b))
+            res_paths[fmt] = str(p)
+        except Exception as _:
+            pass
+
+    # Expose paths via compare payload so UI can offer a combined download if desired
+    cmp["_report_paths"] = res_paths
+
+    return res_a, res_b, cmp, llm_md
+
+# Runs two analyses in parallel and return (resA, resB).
+def run_pipeline_pair(dir_a: Path, dir_b: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        fa = ex.submit(run_pipeline, dir_a)
+        fb = ex.submit(run_pipeline, dir_b)
+        res_a = fa.result()
+        res_b = fb.result()
+    return res_a, res_b
 
 def run_pipeline(code_dir: Path) -> Dict[str, Any]:
     """
-    radon -> pylint -> recommend/LLM -> merge (manual workflow)
+    radon -> pylint -> recommend/LLM -> merge (manual or adk workflow)
     quality score
     uses code_auditor _agent for an adk message
     """
@@ -118,9 +131,9 @@ def run_pipeline(code_dir: Path) -> Dict[str, Any]:
     result.setdefault("recommendations", {})
 
     # uses recommender first to compute and attach quality score
-    result["enhanced_metrics"] = {
-        "quality_score": _compute_quality_score(result)
-    }
+    qs = _compute_quality_score(result)
+    result["enhanced_metrics"] = {"quality_score": qs}
+    result["quality_score"] = qs
 
     # ensure there is an adk message (if message missing fall back to code_auditor_agent)
     mode = (os.getenv("CODEINSIGHT_AGENT") or "ollama").lower()

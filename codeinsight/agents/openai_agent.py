@@ -48,7 +48,6 @@ class OpenAIAgent:
 
         try:
             # Chat Completions API (stable & documented)
-            # https://platform.openai.com/docs/api-reference/chat/create
             resp = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
