@@ -21,10 +21,6 @@ except Exception:
     ADK_OK = False
 
 
-# helpers
-# def _avg(vals: List[float]) -> float:
-#     return round(sum(vals) / len(vals), 2) if vals else 0.0
-
 def _avg_mi(res: Dict) -> float:
     files = (res.get("radon", {}) or {}).get("files", [])
     if not files:
@@ -62,14 +58,14 @@ def _compute_quality_score(result: Dict[str, Any]) -> int:
     radon = result.get("radon") or {}
     r_files = radon.get("files") or []
 
-    # --- Base from MI ---
+    # Base from MI
     if r_files:
         mi_vals = [float(f.get("mi", 0.0)) for f in r_files]
         avg_mi = sum(mi_vals) / max(1, len(mi_vals))
     else:
         avg_mi = 50.0  # neutral base if MI unknown
 
-    # --- Pylint penalties (robust key normalization) ---
+    # Pylint penalties
     by_type_raw = ((result.get("pylint") or {}).get("summary") or {}).get("by_type", {}) or {}
     def _pylint_counts(bt: Dict[str, Any]) -> Dict[str, int]:
         out = {"C": 0, "R": 0, "W": 0, "E": 0, "F": 0}
@@ -95,7 +91,7 @@ def _compute_quality_score(result: Dict[str, Any]) -> int:
     PYLINT_W = {"C": 0.6, "R": 0.8, "W": 1.0, "E": 3.0, "F": 8.0}
     pylint_penalty = sum(PYLINT_W[k] * counts[k] for k in counts)
 
-    # --- Radon penalties ---
+    # Radon penalties
     rsum = (radon.get("summary") or {})
     mi_warn = int(rsum.get("mi_warnings", 0))
     cc_hot = int(rsum.get("cc_hotspots", 0))
@@ -103,7 +99,7 @@ def _compute_quality_score(result: Dict[str, Any]) -> int:
     RADON_W_CC = 1.5   # per spec
     radon_penalty = RADON_W_MI * mi_warn + RADON_W_CC * cc_hot
 
-    # --- Density penalty ---
+    # Density penalty
     total_msgs = int(((result.get("pylint") or {}).get("summary") or {}).get("total", 0))
     files_scanned = (len(r_files) or int(rsum.get("files") or 1))
     per_file = total_msgs / max(1, files_scanned)
@@ -111,7 +107,7 @@ def _compute_quality_score(result: Dict[str, Any]) -> int:
     DENSITY_SLOPE = 2.0
     density_penalty = (per_file - DENSITY_THRESHOLD) * DENSITY_SLOPE if per_file > DENSITY_THRESHOLD else 0.0
 
-    # --- Final ---
+    # Final
     total_penalty = pylint_penalty + radon_penalty + density_penalty
     raw = avg_mi - total_penalty
     return _clamp(round(raw))  # assumes _clamp(x) -> int in [0,100]
@@ -304,7 +300,7 @@ def _build_adk_flow(steps: Iterable, agent: Any):
             return flow
 
 
-# analyzes with adk workflow
+# Analyze with adk workflow
 def run_analysis_with_adk_flow(code_dir: Path, radon_config: Dict[str, Any] | None = None) -> Dict[str, Any]:
     """always returns a JSON-friendly dict the UI understands"""
     code_dir = Path(code_dir)
@@ -349,7 +345,7 @@ def run_analysis_with_adk_flow(code_dir: Path, radon_config: Dict[str, Any] | No
         res["adk_message"] = "ADK disabled; ran manual flow"
     return res
 
-# provides llm comparison
+# Provide LLM comparison
 def _get_agent():
     """Runs with chosen AI model"""
     try:
@@ -367,7 +363,7 @@ def summarize_comparison_with_llm(res_a: dict, res_b: dict, cmp: dict) -> str:
     Builds a compact markdown summary via the selected agent (Ollama/OpenAI),
     falling back to a templated string.
     """
-    # Build a short, model-friendly prompt
+    # Build model-friendly prompt for comparison
     metrics = cmp.get("metrics", [])
     table = "\n".join(f"- {m['metric']}: A={m['A']} B={m['B']} Δ={m['delta']}" for m in metrics)
     prompt = (
