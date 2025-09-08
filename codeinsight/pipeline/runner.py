@@ -66,14 +66,6 @@ def compare_results(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
         "top_hotspots": {"A": _top_hotspots(a), "B": _top_hotspots(b)},
     }
 
-# llm comparison
-# def _llm_comparison_markdown(cmp_payload: dict, res_a=None, res_b=None) -> str | None:
-#     try:
-#         from codeinsight.agents.adk_flow_integration import llm_comparison_markdown
-#         return llm_comparison_markdown(cmp_payload, res_a=res_a, res_b=res_b)  # returns None if no agent/disabled
-#     except Exception:
-#         return None
-
 def run_pair_and_compare(dir_a: Path, dir_b: Path, with_llm: bool = True):
     """Analyze dir_a and dir_b in parallel, then compare + LLM summary."""
     res_a, res_b = run_pipeline_pair(dir_a, dir_b)
