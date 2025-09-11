@@ -80,7 +80,7 @@ def save_pdf_report(result: dict, outdir: Path) -> Path:
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # ----- fonts -----
+    # fonts
     font_dir = Path("codeinsight/assets/fonts")
     regular = font_dir / "DejaVuSans.ttf"
     bold    = font_dir / "DejaVuSans-Bold.ttf"
@@ -108,19 +108,19 @@ def save_pdf_report(result: dict, outdir: Path) -> Path:
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(w_available(), h, txt)
 
-    # ----- title -----
+    # title
     set_regular(14)
     pdf.cell(0, 10, f"CodeInsight Report ({ts})", ln=True, align="C")
     pdf.ln(4)
 
-    # ----- summary -----
+    # summary
     set_regular(11)
     write_line(f"Files scanned: {result.get('files_scanned', 0)}")
     write_line(f"Issues found: {result.get('issues_found', 0)}")
     qs = (result.get("enhanced_metrics") or {}).get("quality_score", 0)
     write_line(f"Quality score: {qs}/100")
 
-    # ----- charts -----
+    # charts
     radon_files = (result.get("radon") or {}).get("files", [])
     if radon_files:
         mi_data = {Path(f["path"]).name: round(float(f["mi"]), 1) for f in radon_files}
@@ -145,7 +145,7 @@ def save_pdf_report(result: dict, outdir: Path) -> Path:
             pdf.image(str(cc_chart), x=x, w=w)
             pdf.ln(3)
 
-    # ----- project-level suggestions -----
+    # project-level suggestions 
     pdf.ln(6)
     set_bold(12)
     pdf.cell(0, 10, "Project-level Suggestions", ln=True)
@@ -153,7 +153,7 @@ def save_pdf_report(result: dict, outdir: Path) -> Path:
     for r in (result.get("recommendations") or {}).get("project_suggestions", []):
         write_line(f"- {_short(r)}")
 
-    # ----- refactor ideas -----
+    # refactor ideas 
     pdf.ln(4)
     set_bold(12)
     pdf.cell(0, 10, "Refactor Ideas (Top Files)", ln=True)
